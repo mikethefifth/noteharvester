@@ -16,8 +16,9 @@ struct ContentView: View {
     @State private var isExportMenuPresented = false
     @State private var bookSearchText = ""
     @State private var annotationSearchText = ""
+    @State private var loadingCancellationToken: Task<Void, Never>?
     
-    private let databaseManager = DatabaseManager()
+    @StateObject private var databaseManager = DatabaseManager()
     @State private var keyboardMonitor: Any?
     
     var filteredBooks: [Book] {
@@ -45,43 +46,140 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(filteredBooks, id: \.self, selection: $selectedBooks) { book in
-                HStack {
-                    if let coverURL = book.cover {
-                        AsyncImage(url: coverURL) { image in
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 40, height: 60)
-                        } placeholder: {
+            if databaseManager.isLoading && books.isEmpty {
+                VStack(spacing: 20) {
+                    Image(systemName: "book.circle")
+                        .font(.system(size: 64))
+                        .foregroundColor(.secondary)
+                    
+                    Text("Loading Apple Books")
+                        .font(.title2)
+                        .fontWeight(.medium)
+                    
+                    ProgressView(value: databaseManager.loadingProgress)
+                        .progressViewStyle(LinearProgressViewStyle())
+                        .frame(maxWidth: 300)
+                    
+                    Text(databaseManager.loadingMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .animation(.easeInOut, value: databaseManager.loadingMessage)
+                    
+                    if let errorMessage = databaseManager.errorMessage {
+                        VStack(spacing: 10) {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            Button("Try Again") {
+                                databaseManager.clearCache()
+                                loadBooks()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.top)
+                    }
+                    
+                    Button("Cancel") {
+                        cancelLoading()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+            } else if !databaseManager.isLoading && books.isEmpty && databaseManager.errorMessage != nil {
+                VStack(spacing: 20) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 64))
+                        .foregroundColor(.orange)
+                    
+                    Text("Unable to Load Books")
+                        .font(.title2)
+                        .fontWeight(.medium)
+                    
+                    if let errorMessage = databaseManager.errorMessage {
+                        Text(errorMessage)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    
+                    VStack(spacing: 10) {
+                        Button("Try Again") {
+                            databaseManager.clearCache()
+                            loadBooks()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        
+                        Button("Open Apple Books") {
+                            NSWorkspace.shared.launchApplication("Books")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding()
+            } else {
+                List(filteredBooks, id: \.self, selection: $selectedBooks) { book in
+                    HStack {
+                        if let coverURL = book.cover {
+                            AsyncImage(url: coverURL) { image in
+                                image
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 40, height: 60)
+                            } placeholder: {
+                                Image(systemName: "book.closed")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 40, height: 60)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
                             Image(systemName: "book.closed")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 40, height: 60)
                                 .foregroundColor(.secondary)
                         }
-                    } else {
-                        Image(systemName: "book.closed")
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: 40, height: 60)
-                            .foregroundColor(.secondary)
-                    }
-                    
-                    VStack(alignment: .leading) {
-                        Text(book.author)
-                            .font(.caption)
-                        Text(book.title)
-                            .font(.headline)
-                        Text(book.annotations.count == 1 ? "1 Highlight" : "\(book.annotations.count) Highlights")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        
+                        VStack(alignment: .leading) {
+                            Text(book.author)
+                                .font(.caption)
+                            Text(book.title)
+                                .font(.headline)
+                            Text(book.annotations.count == 1 ? "1 Highlight" : "\(book.annotations.count) Highlights")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
-            }
-            .searchable(text: $bookSearchText, placement: .sidebar, prompt: "Search books")
-            .onChange(of: bookSearchText) { _ in
-                selectedAnnotations.removeAll()
+                .searchable(text: $bookSearchText, placement: .sidebar, prompt: "Search books")
+                .onChange(of: bookSearchText) { _ in
+                    selectedAnnotations.removeAll()
+                }
+                .overlay(alignment: .bottom) {
+                    if databaseManager.isLoading && !books.isEmpty {
+                        HStack {
+                            ProgressView()
+                                .controlSize(.small)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(databaseManager.loadingMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("\(books.count) books loaded so far")
+                                    .font(.caption2)
+                                    .foregroundColor(.tertiary)
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                        .padding()
+                    }
+                }
             }
         } detail: {
             if selectedBooks.isEmpty {
@@ -138,6 +236,17 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Button(action: {
+                    databaseManager.clearCache()
+                    books.removeAll()
+                    loadBooks()
+                }) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(databaseManager.isLoading)
+            }
+            
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
                     isExportMenuPresented = true
                 }) {
                     Label("Export", systemImage: "square.and.arrow.up")
@@ -171,18 +280,46 @@ struct ContentView: View {
         }
         .onDisappear {
             removeKeyboardShortcut()
+            cancelLoading()
         }
         .frame(minWidth: 600, minHeight: 400)
     }
     
     private func loadBooks() {
-        do {
-            var books = try databaseManager.getBooks()
-            books.sort { $0.latestAnnotationDate <= $1.latestAnnotationDate }
-            self.books = books
-        } catch {
-            print("Failed to load books: \(error)")
+        // Cancel any existing loading task
+        loadingCancellationToken?.cancel()
+        
+        loadingCancellationToken = Task {
+            for await result in databaseManager.loadBooksProgressively() {
+                if Task.isCancelled { return }
+                
+                switch result {
+                case .bookLoaded(let book):
+                    await MainActor.run {
+                        books.append(book)
+                        // Sort books by latest annotation date as they come in
+                        books.sort { $0.latestAnnotationDate >= $1.latestAnnotationDate }
+                    }
+                    
+                case .error(let error):
+                    await MainActor.run {
+                        print("Error loading book: \(error)")
+                    }
+                    
+                case .completed(let totalBooksLoaded):
+                    await MainActor.run {
+                        print("Completed loading \(totalBooksLoaded) books")
+                        // Final sort
+                        books.sort { $0.latestAnnotationDate >= $1.latestAnnotationDate }
+                    }
+                }
+            }
         }
+    }
+    
+    private func cancelLoading() {
+        loadingCancellationToken?.cancel()
+        loadingCancellationToken = nil
     }
     
     private func colorForCode(_ code: Int64?) -> Color {
