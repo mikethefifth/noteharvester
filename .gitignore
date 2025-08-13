@@ -141,7 +141,7 @@ iOSInjectionProject/
 ### SwiftPackageManager ###
 Packages
 xcuserdata
-*.xcodeproj
+# Note: We keep the .xcodeproj file for this project since it's primarily an Xcode project
 
 
 ### VisualStudioCode ###
