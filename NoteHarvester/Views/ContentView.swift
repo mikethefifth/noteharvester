@@ -48,6 +48,14 @@ struct ContentView: View {
         NavigationSplitView {
             if databaseManager.isLoading && books.isEmpty {
                 VStack(spacing: 20) {
+                    Image(systemName: "book.circle")
+                        .font(.system(size: 64))
+                        .foregroundColor(.secondary)
+                    
+                    Text("Loading Apple Books")
+                        .font(.title2)
+                        .fontWeight(.medium)
+                    
                     ProgressView(value: databaseManager.loadingProgress)
                         .progressViewStyle(LinearProgressViewStyle())
                         .frame(maxWidth: 300)
@@ -56,18 +64,61 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
+                        .animation(.easeInOut, value: databaseManager.loadingMessage)
                     
                     if let errorMessage = databaseManager.errorMessage {
-                        Text(errorMessage)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                            .multilineTextAlignment(.center)
+                        VStack(spacing: 10) {
+                            Text(errorMessage)
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                            
+                            Button("Try Again") {
+                                databaseManager.clearCache()
+                                loadBooks()
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .padding(.top)
                     }
                     
                     Button("Cancel") {
                         cancelLoading()
                     }
                     .buttonStyle(.bordered)
+                }
+                .padding()
+            } else if !databaseManager.isLoading && books.isEmpty && databaseManager.errorMessage != nil {
+                VStack(spacing: 20) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 64))
+                        .foregroundColor(.orange)
+                    
+                    Text("Unable to Load Books")
+                        .font(.title2)
+                        .fontWeight(.medium)
+                    
+                    if let errorMessage = databaseManager.errorMessage {
+                        Text(errorMessage)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    
+                    VStack(spacing: 10) {
+                        Button("Try Again") {
+                            databaseManager.clearCache()
+                            loadBooks()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        
+                        Button("Open Apple Books") {
+                            NSWorkspace.shared.launchApplication("Books")
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
                 .padding()
             } else {
@@ -114,9 +165,14 @@ struct ContentView: View {
                         HStack {
                             ProgressView()
                                 .controlSize(.small)
-                            Text(databaseManager.loadingMessage)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(databaseManager.loadingMessage)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("\(books.count) books loaded so far")
+                                    .font(.caption2)
+                                    .foregroundColor(.tertiary)
+                            }
                         }
                         .padding(.horizontal)
                         .padding(.vertical, 8)
@@ -178,6 +234,17 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Button(action: {
+                    databaseManager.clearCache()
+                    books.removeAll()
+                    loadBooks()
+                }) {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .disabled(databaseManager.isLoading)
+            }
+            
             ToolbarItem(placement: .automatic) {
                 Button(action: {
                     isExportMenuPresented = true

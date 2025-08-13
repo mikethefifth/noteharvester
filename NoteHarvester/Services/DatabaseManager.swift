@@ -21,6 +21,10 @@ class DatabaseManager: ObservableObject {
     @Published var loadingMessage = ""
     @Published var errorMessage: String?
     
+    // Simple cache to avoid reprocessing books
+    private var loadedBooks: [String: Book] = [:]
+    private var lastLoadTime: Date?
+    
     private let SELECT_ALL_ANNOTATIONS_QUERY = """
     SELECT 
       ZANNOTATIONASSETID as assetId,
@@ -40,6 +44,21 @@ class DatabaseManager: ObservableObject {
     private let SELECT_ALL_BOOKS_QUERY = """
     SELECT ZASSETID as id, ZTITLE as title, ZAUTHOR as author, ZPATH as path FROM ZBKLIBRARYASSET;
     """
+    
+    // Check if Apple Books database is available
+    private func validateAppleBooksAccess() throws {
+        guard FileManager.default.fileExists(atPath: BOOK_DB_PATH) else {
+            throw DatabaseError.appleBooksNotFound
+        }
+        
+        guard FileManager.default.fileExists(atPath: ANNOTATION_DB_PATH) else {
+            throw DatabaseError.annotationsNotFound
+        }
+        
+        // Try to read the directories to ensure we have permission
+        _ = try FileManager.default.contentsOfDirectory(atPath: BOOK_DB_PATH)
+        _ = try FileManager.default.contentsOfDirectory(atPath: ANNOTATION_DB_PATH)
+    }
     
     func getBooks() throws -> [Book] {
         let booksFiles = try FileManager.default.contentsOfDirectory(atPath: BOOK_DB_PATH).filter { $0.hasSuffix(".sqlite") }
@@ -77,7 +96,20 @@ class DatabaseManager: ObservableObject {
                 }
                 
                 do {
+                    // Validate Apple Books access first
+                    try validateAppleBooksAccess()
+                    
                     let booksFiles = try FileManager.default.contentsOfDirectory(atPath: BOOK_DB_PATH).filter { $0.hasSuffix(".sqlite") }
+                    
+                    guard !booksFiles.isEmpty else {
+                        await MainActor.run {
+                            errorMessage = "No Apple Books database files found. Please ensure you have books in Apple Books."
+                            isLoading = false
+                        }
+                        continuation.finish()
+                        return
+                    }
+                    
                     let totalFiles = booksFiles.count
                     
                     await MainActor.run {
@@ -100,19 +132,36 @@ class DatabaseManager: ObservableObject {
                                     continue
                                 }
                                 
+                                // Skip if we already loaded this book recently
+                                if let cachedBook = loadedBooks[id],
+                                   let lastLoad = lastLoadTime,
+                                   Date().timeIntervalSince(lastLoad) < 300 { // 5 minutes cache
+                                    continuation.yield(.bookLoaded(cachedBook))
+                                    totalBooksProcessed += 1
+                                    continue
+                                }
+                                
                                 await MainActor.run {
                                     loadingMessage = "Loading '\(title)' by \(author)"
                                 }
                                 
-                                let cover = await Task {
-                                    return parseCoverImage(bookPathString: coverPathString)
-                                }.value
-                                
-                                let annotations = try await Task {
-                                    return try getAnnotations(forBookId: id)
-                                }.value
+                                // Process cover and annotations in background
+                                let (cover, annotations) = await withTaskGroup(of: (URL?, [Annotation]).self) { group in
+                                    group.addTask {
+                                        let cover = self.parseCoverImage(bookPathString: coverPathString)
+                                        let annotations = try? self.getAnnotations(forBookId: id)
+                                        return (cover, annotations ?? [])
+                                    }
+                                    
+                                    return await group.next() ?? (nil, [])
+                                }
                                 
                                 let book = Book(id: id, title: title, author: author, cover: cover, annotations: annotations)
+                                
+                                // Cache the book
+                                await MainActor.run {
+                                    loadedBooks[id] = book
+                                }
                                 
                                 totalBooksProcessed += 1
                                 
@@ -136,6 +185,7 @@ class DatabaseManager: ObservableObject {
                         loadingProgress = 1.0
                         loadingMessage = "Loaded \(totalBooksProcessed) books successfully"
                         isLoading = false
+                        lastLoadTime = Date()
                     }
                     
                     continuation.yield(.completed(totalBooksProcessed))
@@ -143,7 +193,7 @@ class DatabaseManager: ObservableObject {
                     
                 } catch {
                     await MainActor.run {
-                        errorMessage = "Failed to access Apple Books database: \(error.localizedDescription)"
+                        errorMessage = error.localizedDescription
                         isLoading = false
                     }
                     continuation.yield(.error(error))
@@ -151,6 +201,12 @@ class DatabaseManager: ObservableObject {
                 }
             }
         }
+    }
+    
+    // Method to clear cache and force reload
+    func clearCache() {
+        loadedBooks.removeAll()
+        lastLoadTime = nil
     }
     
     private func getAnnotations(forBookId bookId: String) throws -> [Annotation] {
@@ -197,6 +253,20 @@ class DatabaseManager: ObservableObject {
         let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         try csvString.write(to: fileURL, atomically: true, encoding: .utf8)
         print("Annotations exported to: \(fileURL.path)")
+    }
+}
+
+enum DatabaseError: LocalizedError {
+    case appleBooksNotFound
+    case annotationsNotFound
+    
+    var errorDescription: String? {
+        switch self {
+        case .appleBooksNotFound:
+            return "Apple Books library not found. Please ensure Apple Books is installed and you have books in your library."
+        case .annotationsNotFound:
+            return "Apple Books annotations database not found. This may be due to privacy settings or Apple Books not being properly configured."
+        }
     }
 }
 
