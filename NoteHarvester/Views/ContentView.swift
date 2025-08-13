@@ -152,6 +152,14 @@ struct ContentView: View {
                             Label("Export as CSV", systemImage: "doc.plaintext")
                         }
                         .buttonStyle(.plain)
+                        
+                        Button(action: {
+                            exportAsMarkdown()
+                            isExportMenuPresented = false
+                        }) {
+                            Label("Export as Markdown", systemImage: "doc.text")
+                        }
+                        .buttonStyle(.plain)
                     }
                     .padding()
                 }
@@ -248,6 +256,174 @@ struct ContentView: View {
                     print("Failed to save CSV: \(error)")
                 }
             }
+        }
+    }
+    
+    private func exportAsMarkdown() {
+        let markdownString = generateMarkdownContent()
+        
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md")].compactMap { $0 }
+        panel.nameFieldStringValue = "exported_annotations.md"
+        
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                do {
+                    try markdownString.write(to: url, atomically: true, encoding: .utf8)
+                } catch {
+                    print("Failed to save Markdown: \(error)")
+                }
+            }
+        }
+    }
+    
+    private func generateMarkdownContent() -> String {
+        // Group annotations by book
+        let bookAnnotations = Dictionary(grouping: selectedAnnotations) { annotation in
+            books.first { $0.annotations.contains(annotation) }!
+        }
+        
+        var markdownContent = ""
+        let exportDate = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none)
+        
+        // Handle multi-book vs single book export
+        if bookAnnotations.count == 1 {
+            // Single book export
+            let book = bookAnnotations.keys.first!
+            let annotations = bookAnnotations[book]!
+            markdownContent = generateSingleBookMarkdown(book: book, annotations: annotations, exportDate: exportDate)
+        } else {
+            // Multi-book export
+            markdownContent = generateMultiBookMarkdown(bookAnnotations: bookAnnotations, exportDate: exportDate)
+        }
+        
+        return markdownContent
+    }
+    
+    private func generateSingleBookMarkdown(book: Book, annotations: [Annotation], exportDate: String) -> String {
+        var content = ""
+        
+        // Book title and metadata
+        content += "# \(book.title)\n"
+        content += "**by \(book.author)**\n\n"
+        
+        // Metadata section
+        content += "## Metadata\n"
+        content += "- **Author**: \(book.author)\n"
+        content += "- **Export Date**: \(exportDate)\n"
+        content += "- **Total Highlights**: \(annotations.filter { $0.quote != nil && !$0.quote!.isEmpty }.count)\n"
+        content += "- **Total Notes**: \(annotations.filter { $0.comment != nil && !$0.comment!.isEmpty }.count)\n\n"
+        
+        // Group annotations by chapter if available
+        let chapterGroups = Dictionary(grouping: annotations) { $0.chapter ?? "Unknown Chapter" }
+        let sortedChapters = chapterGroups.keys.sorted()
+        
+        for chapter in sortedChapters {
+            let chapterAnnotations = chapterGroups[chapter]!
+            content += "## \(chapter)\n\n"
+            
+            for annotation in chapterAnnotations {
+                content += formatAnnotation(annotation: annotation)
+                content += "\n"
+            }
+        }
+        
+        return content
+    }
+    
+    private func generateMultiBookMarkdown(bookAnnotations: [Book: [Annotation]], exportDate: String) -> String {
+        var content = ""
+        
+        // Header for multi-book export
+        content += "# Exported Annotations\n\n"
+        content += "## Export Information\n"
+        content += "- **Export Date**: \(exportDate)\n"
+        content += "- **Books Included**: \(bookAnnotations.count)\n"
+        
+        let totalHighlights = bookAnnotations.values.flatMap { $0 }.filter { $0.quote != nil && !$0.quote!.isEmpty }.count
+        let totalNotes = bookAnnotations.values.flatMap { $0 }.filter { $0.comment != nil && !$0.comment!.isEmpty }.count
+        
+        content += "- **Total Highlights**: \(totalHighlights)\n"
+        content += "- **Total Notes**: \(totalNotes)\n\n"
+        
+        // Add each book
+        let sortedBooks = bookAnnotations.keys.sorted { $0.title < $1.title }
+        for book in sortedBooks {
+            let annotations = bookAnnotations[book]!
+            content += "---\n\n"
+            content += generateSingleBookMarkdown(book: book, annotations: annotations, exportDate: exportDate)
+        }
+        
+        return content
+    }
+    
+    private func formatAnnotation(annotation: Annotation) -> String {
+        var content = ""
+        let isHighlight = annotation.quote != nil && !annotation.quote!.isEmpty
+        let isNote = annotation.comment != nil && !annotation.comment!.isEmpty
+        
+        if isHighlight && isNote {
+            // Both highlight and note
+            content += "### Highlight with Note\n"
+            content += "> \"\(annotation.quote!)\"\n\n"
+            content += "**Personal Note:** \(annotation.comment!)\n\n"
+        } else if isHighlight {
+            // Just highlight
+            content += "### Highlight\n"
+            content += "> \"\(annotation.quote!)\"\n\n"
+        } else if isNote {
+            // Just note
+            content += "### Note\n"
+            content += "**Personal Note:** \(annotation.comment!)\n\n"
+        }
+        
+        // Add metadata
+        var metadata: [String] = []
+        
+        if let colorCode = annotation.colorCode {
+            let colorName = colorNameForCode(colorCode)
+            metadata.append("Color: \(colorName)")
+        }
+        
+        if let createdAt = annotation.createdAt {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateStyle = .medium
+            dateFormatter.timeStyle = .short
+            let dateString = dateFormatter.string(from: Date(timeIntervalSince1970: createdAt))
+            metadata.append("Created: \(dateString)")
+        }
+        
+        if let modifiedAt = annotation.modifiedAt, modifiedAt != annotation.createdAt {
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateStyle = .medium
+            dateFormatter.timeStyle = .short
+            let dateString = dateFormatter.string(from: Date(timeIntervalSince1970: modifiedAt))
+            metadata.append("Modified: \(dateString)")
+        }
+        
+        if !metadata.isEmpty {
+            content += "*\(metadata.joined(separator: " • "))*\n"
+        }
+        
+        return content
+    }
+    
+    private func colorNameForCode(_ code: Int64) -> String {
+        switch code {
+        case 0:
+            return "Underline"
+        case 1:
+            return "Green"
+        case 2:
+            return "Blue"
+        case 3:
+            return "Yellow"
+        case 4:
+            return "Pink"
+        case 5:
+            return "Purple"
+        default:
+            return "Default"
         }
     }
 }
