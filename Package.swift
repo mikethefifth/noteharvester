@@ -13,15 +13,17 @@ let package = Package(
         )
     ],
     dependencies: [
-        .package(url: "https://github.com/stephencelis/SQLite.swift.git", from: "0.15.3"),
-        .package(url: "https://github.com/danielsaidi/EPUBKit.git", from: "0.2.0")
+        .package(url: "https://github.com/stephencelis/SQLite.swift.git", from: "0.15.3")
+        // Note: EPUBKit dependency temporarily removed due to repository availability
+        // .package(url: "https://github.com/danielsaidi/EPUBKit.git", from: "0.2.0")
     ],
     targets: [
         .executableTarget(
             name: "NoteHarvester",
             dependencies: [
-                .product(name: "SQLite", package: "SQLite.swift"),
-                .product(name: "EPUBKit", package: "EPUBKit")
+                .product(name: "SQLite", package: "SQLite.swift")
+                // Note: EPUBKit dependency temporarily removed
+                // .product(name: "EPUBKit", package: "EPUBKit")
             ],
             path: "NoteHarvester"
         ),

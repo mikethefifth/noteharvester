@@ -7,7 +7,8 @@
 
 import Foundation
 import SQLite
-import EPUBKit
+// Note: EPUBKit temporarily disabled due to repository availability
+// import EPUBKit
 
 @MainActor
 class DatabaseManager: ObservableObject {
@@ -241,8 +242,11 @@ class DatabaseManager: ObservableObject {
     }
     
     private func parseCoverImage(bookPathString: String) -> URL? {
-        guard let document = EPUBDocument(url: URL(fileURLWithPath: bookPathString)) else { return nil }
-        return document.cover
+        // Note: EPUBKit temporarily disabled due to repository availability
+        // TODO: Implement alternative EPUB cover parsing or find working EPUBKit alternative
+        // guard let document = EPUBDocument(url: URL(fileURLWithPath: bookPathString)) else { return nil }
+        // return document.cover
+        return nil  // Temporarily return nil until EPUBKit dependency is resolved
     }
     
     func exportAnnotationsToCSV(annotations: [Annotation], fileName: String) throws {

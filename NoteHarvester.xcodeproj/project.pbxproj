@@ -16,7 +16,6 @@
 		A11111111111111111111117 /* NoteHarvesterUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000007 /* NoteHarvesterUITests.swift */; };
 		A11111111111111111111118 /* NoteHarvesterUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000008 /* NoteHarvesterUITestsLaunchTests.swift */; };
 		A11111111111111111111119 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = A55555555555555555555555 /* SQLite */; };
-		A1111111111111111111111A /* EPUBKit in Frameworks */ = {isa = PBXBuildFile; productRef = A66666666666666666666666 /* EPUBKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,7 +56,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A11111111111111111111119 /* SQLite in Frameworks */,
-				A1111111111111111111111A /* EPUBKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -170,7 +168,6 @@
 			name = NoteHarvester;
 			packageProductDependencies = (
 				A55555555555555555555555 /* SQLite */,
-				A66666666666666666666666 /* EPUBKit */,
 			);
 			productName = NoteHarvester;
 			productReference = A33333333333333333333333 /* NoteHarvester.app */;
@@ -246,7 +243,6 @@
 			mainGroup = AAAAAAAAAAAAAAAAAAAAAA1;
 			packageReferences = (
 				A55555555555555555555554 /* XCRemoteSwiftPackageReference "SQLite.swift" */,
-				A66666666666666666666665 /* XCRemoteSwiftPackageReference "EPUBKit" */,
 			);
 			productRefGroup = AAAAAAAAAAAAAAAAAAAAAA5 /* Products */;
 			projectDirPath = "";
@@ -615,14 +611,6 @@
 				minimumVersion = 0.15.3;
 			};
 		};
-		A66666666666666666666665 /* XCRemoteSwiftPackageReference "EPUBKit" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/danielsaidi/EPUBKit.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 0.2.0;
-			};
-		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -630,11 +618,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A55555555555555555555554 /* XCRemoteSwiftPackageReference "SQLite.swift" */;
 			productName = SQLite;
-		};
-		A66666666666666666666666 /* EPUBKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A66666666666666666666665 /* XCRemoteSwiftPackageReference "EPUBKit" */;
-			productName = EPUBKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
