@@ -1,4 +1,8 @@
 .aider*
+
+# Demo files (temporary)
+demo_async_behavior.swift
+
 # Created by https://www.toptal.com/developers/gitignore/api/macos,visualstudiocode,xcode,swift,swiftpackagemanager,git
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,visualstudiocode,xcode,swift,swiftpackagemanager,git
 
