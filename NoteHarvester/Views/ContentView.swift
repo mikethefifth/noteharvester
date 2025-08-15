@@ -11,278 +11,289 @@ import UniformTypeIdentifiers
 
 struct ContentView: View {
     @State var books: [Book] = []
-    @State var selectedBooks: Set<Book> = []
-    @State var selectedAnnotations: Set<Annotation> = Set<Annotation>()
-    @State private var isExportMenuPresented = false
     @State private var bookSearchText = ""
-    @State private var annotationSearchText = ""
     @State private var loadingCancellationToken: Task<Void, Never>?
+    @State private var sortBy: SortOption = .title
+    @State private var viewMode: ViewMode = .grid
+    @State private var showOnlyBooksWithAnnotations: Bool = true
+    @State private var navigationPath = NavigationPath()
     
     @StateObject private var databaseManager = DatabaseManager()
-    @State private var keyboardMonitor: Any?
+    
+    enum SortOption: String, CaseIterable {
+        case title = "Title"
+        case author = "Author"
+        case latestAnnotation = "Latest Annotation"
+        case annotationCount = "Annotation Count"
+    }
+    
+    enum ViewMode: String, CaseIterable {
+        case list = "List"
+        case grid = "Grid"
+        
+        var icon: String {
+            switch self {
+            case .list: return "list.bullet"
+            case .grid: return "square.grid.2x2"
+            }
+        }
+    }
     
     var filteredBooks: [Book] {
-        if bookSearchText.isEmpty {
-            return books
+        let searchFiltered = if bookSearchText.isEmpty {
+            books
         } else {
-            return books.filter { book in
+            books.filter { book in
                 book.title.lowercased().contains(bookSearchText.lowercased()) ||
                 book.author.lowercased().contains(bookSearchText.lowercased())
             }
         }
-    }
-
-    var filteredAnnotations: [Annotation] {
-        let selectedAnnotations = selectedBooks.flatMap { $0.annotations }
-        if annotationSearchText.isEmpty {
-            return selectedAnnotations
+        
+        let annotationFiltered = if showOnlyBooksWithAnnotations {
+            searchFiltered.filter { book in
+                !book.annotations.isEmpty
+            }
         } else {
-            return selectedAnnotations.filter { annotation in
-                annotation.quote?.lowercased().contains(annotationSearchText.lowercased()) ?? false ||
-                annotation.comment?.lowercased().contains(annotationSearchText.lowercased()) ?? false
+            searchFiltered
+        }
+        
+        return annotationFiltered.sorted { first, second in
+            switch sortBy {
+            case .title:
+                return first.title.lowercased() < second.title.lowercased()
+            case .author:
+                return first.author.lowercased() < second.author.lowercased()
+            case .latestAnnotation:
+                return first.latestAnnotationDate >= second.latestAnnotationDate
+            case .annotationCount:
+                return first.annotations.count > second.annotations.count
             }
         }
     }
+    
+    var bookCountText: String {
+        if showOnlyBooksWithAnnotations {
+            return "\(filteredBooks.count) with highlights"
+        } else {
+            return "\(filteredBooks.count) books"
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if databaseManager.isLoading && books.isEmpty {
+            loadingView
+        } else if !databaseManager.isLoading && books.isEmpty && databaseManager.errorMessage != nil {
+            errorView
+        } else {
+            booksMainView
+        }
+    }
+    
+    private var loadingView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "book.circle")
+                .font(.system(size: 64))
+                .foregroundColor(.secondary)
+            
+            Text("Loading Apple Books")
+                .font(.title2)
+                .fontWeight(.medium)
+            
+            ProgressView(value: databaseManager.loadingProgress)
+                .progressViewStyle(LinearProgressViewStyle())
+                .frame(maxWidth: 300)
+            
+            Text(databaseManager.loadingMessage)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .animation(.easeInOut, value: databaseManager.loadingMessage)
+            
+            if let errorMessage = databaseManager.errorMessage {
+                VStack(spacing: 10) {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    
+                    Button("Try Again") {
+                        loadBooks()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(.top)
+            }
+            
+            Button("Cancel") {
+                cancelLoading()
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding()
+    }
+    
+    private var errorView: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 64))
+                .foregroundColor(.orange)
+            
+            Text("Unable to Load Books")
+                .font(.title2)
+                .fontWeight(.medium)
+            
+            if let errorMessage = databaseManager.errorMessage {
+                Text(errorMessage)
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+            
+            VStack(spacing: 10) {
+                Button("Try Again") {
+                    loadBooks()
+                }
+                .buttonStyle(.borderedProminent)
+                
+                Button("Open Apple Books") {
+                    if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.iBooksX") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+    }
+    
+    private var booksMainView: some View {
+        ScrollView {
+            if viewMode == .grid {
+                booksGridView
+            } else {
+                booksListContentView
+            }
+        }
+        .background(Color.clear)
+        .navigationTitle("Books")
+        .searchable(text: $bookSearchText, placement: .toolbar, prompt: "Search your library...")
+        .onChange(of: bookSearchText) { _ in
+            // Clear selection when searching
+        }
+    }
+    
+    private var booksGridView: some View {
+        // Use fixed columns for better performance during resize
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 20), count: 4)
+        
+        return LazyVGrid(columns: columns, spacing: 24) {
+            ForEach(filteredBooks, id: \.id) { book in
+                BookGridItem(book: book)
+                    .id(book.id) // Stable identity for better performance
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 40)
+    }
+    
+    private var booksListContentView: some View {
+        LazyVStack(spacing: 0) {
+            ForEach(filteredBooks, id: \.self) { book in
+                BookListItem(book: book)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 40)
+    }
+    
 
     var body: some View {
-        NavigationSplitView {
-            if databaseManager.isLoading && books.isEmpty {
-                VStack(spacing: 20) {
-                    Image(systemName: "book.circle")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary)
-                    
-                    Text("Loading Apple Books")
-                        .font(.title2)
-                        .fontWeight(.medium)
-                    
-                    ProgressView(value: databaseManager.loadingProgress)
-                        .progressViewStyle(LinearProgressViewStyle())
-                        .frame(maxWidth: 300)
-                    
-                    Text(databaseManager.loadingMessage)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                        .animation(.easeInOut, value: databaseManager.loadingMessage)
-                    
-                    if let errorMessage = databaseManager.errorMessage {
-                        VStack(spacing: 10) {
-                            Text(errorMessage)
-                                .font(.caption)
-                                .foregroundColor(.red)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal)
-                            
-                            Button("Try Again") {
-                                databaseManager.clearCache()
-                                loadBooks()
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                        .padding(.top)
-                    }
-                    
-                    Button("Cancel") {
-                        cancelLoading()
-                    }
-                    .buttonStyle(.bordered)
+        NavigationStack(path: $navigationPath) {
+            mainContent
+                .navigationDestination(for: Book.self) { book in
+                    BookDetailView(book: book)
                 }
-                .padding()
-            } else if !databaseManager.isLoading && books.isEmpty && databaseManager.errorMessage != nil {
-                VStack(spacing: 20) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 64))
-                        .foregroundColor(.orange)
-                    
-                    Text("Unable to Load Books")
-                        .font(.title2)
-                        .fontWeight(.medium)
-                    
-                    if let errorMessage = databaseManager.errorMessage {
-                        Text(errorMessage)
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    
-                    VStack(spacing: 10) {
-                        Button("Try Again") {
-                            databaseManager.clearCache()
-                            loadBooks()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        
-                        Button("Open Apple Books") {
-                            NSWorkspace.shared.launchApplication("Books")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-                .padding()
-            } else {
-                List(filteredBooks, id: \.self, selection: $selectedBooks) { book in
-                    HStack {
-                        if let coverURL = book.cover {
-                            AsyncImage(url: coverURL) { image in
-                                image
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 40, height: 60)
-                            } placeholder: {
-                                Image(systemName: "book.closed")
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 40, height: 60)
-                                    .foregroundColor(.secondary)
-                            }
-                        } else {
-                            Image(systemName: "book.closed")
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 40, height: 60)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        VStack(alignment: .leading) {
-                            Text(book.author)
-                                .font(.caption)
-                            Text(book.title)
-                                .font(.headline)
-                            Text(book.annotations.count == 1 ? "1 Highlight" : "\(book.annotations.count) Highlights")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .searchable(text: $bookSearchText, placement: .sidebar, prompt: "Search books")
-                .onChange(of: bookSearchText) { _ in
-                    selectedAnnotations.removeAll()
-                }
-                .overlay(alignment: .bottom) {
-                    if databaseManager.isLoading && !books.isEmpty {
-                        HStack {
-                            ProgressView()
-                                .controlSize(.small)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(databaseManager.loadingMessage)
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text("\(books.count) books loaded so far")
-                                    .font(.caption2)
-                                    .foregroundColor(.tertiary)
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .padding()
-                    }
-                }
-            }
-        } detail: {
-            if selectedBooks.isEmpty {
-                Text("Select one or more books to view annotations.")
-            } else {
-                let selectedAnnotations = selectedBooks.flatMap { $0.annotations }
-                if selectedAnnotations.isEmpty {
-                    Text("There are no annotations in the selected books.")
-                        .font(.headline)
-                        .foregroundColor(.gray)
-                } else {
-                    List(filteredAnnotations, id: \.self, selection: $selectedAnnotations) { annotation in
-                        VStack(alignment: .leading) {
-                            if let quote = annotation.quote {
-                                if colorForCode(annotation.colorCode) == .clear {
-                                    Text(quote)
-                                        .font(.body)
-                                        .underline(color: .red)
-                                        .padding(.horizontal, 3)
-                                } else {
-                                    Text(quote)
-                                        .font(.body)
-                                        .background(
-                                            colorForCode(annotation.colorCode)
-                                                .opacity(0.3)
-                                                .cornerRadius(3)
-                                                .padding(.horizontal, -3)
-                                        )
-                                        .padding(.horizontal, 3)
-                                }
-                            }
-                            if let comment = annotation.comment {
-                                Text("- \(comment)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                    .padding(.top, 2)
-                                    .italic()
-                            }
-                        }
-                        .padding(.vertical, 5)
-                    }
-                    .searchable(text: $annotationSearchText, placement: .toolbar, prompt: "Search annotations")
-                    .contextMenu {
-                        Button(action: {
-                            copySelectedAnnotations()
-                        }) {
-                            Text("Copy Selection")
-                            Image(systemName: "doc.on.doc")
-                        }
-                    }
-                }
-            }
         }
         .toolbar {
-            ToolbarItem(placement: .automatic) {
+            if navigationPath.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    HStack(spacing: 12) {
+                        // Book count
+                    Text(bookCountText)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize()
+                    
+                    // View mode toggle
+                    Picker(selection: $viewMode, label: EmptyView()) {
+                        Image(systemName: ViewMode.list.icon)
+                            .tag(ViewMode.list)
+                        Image(systemName: ViewMode.grid.icon)
+                            .tag(ViewMode.grid)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 80)
+                    
+                    // Sort and filter menu
+                    Menu {
+                        // Sort options
+                        ForEach(SortOption.allCases, id: \.self) { option in
+                            Button(action: { sortBy = option }) {
+                                HStack {
+                                    Text(option.rawValue)
+                                    Spacer()
+                                    if sortBy == option {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 12, weight: .semibold))
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        // Filter option
+                        Button(action: { showOnlyBooksWithAnnotations.toggle() }) {
+                            HStack {
+                                Text("Only Books with Highlights")
+                                Spacer()
+                                if showOnlyBooksWithAnnotations {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Sort and filter books")
+                }
+                }
+            
+                ToolbarItem(placement: .automatic) {
                 Button(action: {
-                    databaseManager.clearCache()
                     books.removeAll()
                     loadBooks()
                 }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise")
                 }
                 .disabled(databaseManager.isLoading)
-            }
-            
-            ToolbarItem(placement: .automatic) {
-                Button(action: {
-                    isExportMenuPresented = true
-                }) {
-                    Label("Export", systemImage: "square.and.arrow.up")
-                }
-                .disabled(selectedAnnotations.isEmpty)
-                .popover(isPresented: $isExportMenuPresented, arrowEdge: .bottom) {
-                    VStack {
-                        Button(action: {
-                            exportAsCSV()
-                            isExportMenuPresented = false
-                        }) {
-                            Label("Export as CSV", systemImage: "doc.plaintext")
-                        }
-                        .buttonStyle(.plain)
-                        
-                        Button(action: {
-                            exportAsMarkdown()
-                            isExportMenuPresented = false
-                        }) {
-                            Label("Export as Markdown", systemImage: "doc.text")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding()
+                .help("Refresh library")
                 }
             }
         }
         .onAppear {
             loadBooks()
-            setupKeyboardShortcut()
         }
         .onDisappear {
-            removeKeyboardShortcut()
             cancelLoading()
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 900, idealWidth: 1200, minHeight: 600, idealHeight: 800)
+        .navigationTitle("NoteHarvester")
     }
     
     private func loadBooks() {
@@ -296,9 +307,11 @@ struct ContentView: View {
                 switch result {
                 case .bookLoaded(let book):
                     await MainActor.run {
+                        // Temporarily show ALL books to debug the issue
                         books.append(book)
-                        // Sort books by latest annotation date as they come in
-                        books.sort { $0.latestAnnotationDate >= $1.latestAnnotationDate }
+                        print("📋 Loaded book: '\(book.title)' by \(book.author) - \(book.annotations.count) annotations")
+                        // Sort books alphabetically as they come in
+                        books.sort { $0.title.lowercased() < $1.title.lowercased() }
                     }
                     
                 case .error(let error):
@@ -309,8 +322,8 @@ struct ContentView: View {
                 case .completed(let totalBooksLoaded):
                     await MainActor.run {
                         print("Completed loading \(totalBooksLoaded) books")
-                        // Final sort
-                        books.sort { $0.latestAnnotationDate >= $1.latestAnnotationDate }
+                        // Final alphabetical sort
+                        books.sort { $0.title.lowercased() < $1.title.lowercased() }
                     }
                 }
             }
@@ -321,28 +334,289 @@ struct ContentView: View {
         loadingCancellationToken?.cancel()
         loadingCancellationToken = nil
     }
+}
+
+// MARK: - Book Item Components
+
+struct BookGridItem: View {
+    let book: Book
     
-    private func colorForCode(_ code: Int64?) -> Color {
-        switch code {
-        case 0:
-            return .clear
-        case 1:
-            return .green
-        case 2:
-            return .blue
-        case 3:
-            return .yellow
-        case 4:
-            return .pink
-        case 5:
-            return .purple
-        default:
-            return .primary
+    var body: some View {
+        NavigationLink(value: book) {
+            VStack(alignment: .leading, spacing: 12) {
+                // Book cover - simplified for performance
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(NSColor.controlBackgroundColor))
+                        .frame(height: 140)
+                    
+                    if let coverURL = book.cover {
+                        AsyncImage(url: coverURL) { image in
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .cornerRadius(6)
+                        } placeholder: {
+                            Image(systemName: "book.closed")
+                                .font(.system(size: 32, weight: .light))
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                    } else {
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 32, weight: .light))
+                            .foregroundColor(.secondary.opacity(0.6))
+                    }
+                }
+                .frame(height: 140)
+                
+                // Book info - clean typography
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(book.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    
+                    Text(book.author)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    
+                    Text("\(book.annotations.count) highlights")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            .padding(12)
+            .frame(height: 220)
+            .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+            .shadow(color: Color.black.opacity(0.05), radius: 2, x: 0, y: 1)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct BookListItem: View {
+    let book: Book
+    
+    var body: some View {
+        NavigationLink(value: book) {
+            HStack(spacing: 12) {
+                // Book cover - simplified
+                if let coverURL = book.cover {
+                    AsyncImage(url: coverURL) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 32, height: 48)
+                            .cornerRadius(4)
+                    } placeholder: {
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .frame(width: 32, height: 48)
+                    }
+                } else {
+                    Image(systemName: "book.closed")
+                        .font(.system(size: 16, weight: .light))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .frame(width: 32, height: 48)
+                }
+                
+                // Book info - optimized
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(book.title)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.primary)
+                        .lineLimit(1)
+                    
+                    Text(book.author)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    
+                    Text("\(book.annotations.count) highlights")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Book Detail View
+
+struct BookDetailView: View {
+    let book: Book
+    @State private var selectedAnnotations: Set<Annotation> = Set<Annotation>()
+    @State private var annotationSearchText = ""
+    @State private var viewMode: AnnotationViewMode = .list
+    
+    enum AnnotationViewMode: String, CaseIterable {
+        case list = "List"
+        case grid = "Cards"
+        
+        var icon: String {
+            switch self {
+            case .list: return "list.bullet"
+            case .grid: return "rectangle.grid.2x2"
+            }
+        }
+    }
+    
+    var filteredAnnotations: [Annotation] {
+        if annotationSearchText.isEmpty {
+            return book.annotations
+        } else {
+            return book.annotations.filter { annotation in
+                annotation.quote?.lowercased().contains(annotationSearchText.lowercased()) ?? false ||
+                annotation.comment?.lowercased().contains(annotationSearchText.lowercased()) ?? false
+            }
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Modern header with clean styling
+            HStack(spacing: 20) {
+                // Book cover - larger and more prominent
+                if let coverURL = book.cover {
+                    AsyncImage(url: coverURL) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 60, height: 90)
+                            .cornerRadius(8)
+                    } placeholder: {
+                        Image(systemName: "book.closed")
+                            .font(.system(size: 24, weight: .light))
+                            .foregroundColor(.secondary.opacity(0.6))
+                            .frame(width: 60, height: 90)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(8)
+                    }
+                } else {
+                    Image(systemName: "book.closed")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .frame(width: 60, height: 90)
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .cornerRadius(8)
+                }
+                
+                // Book info with clean typography
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(book.title)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.primary)
+                        .lineLimit(2)
+                    
+                    Text(book.author)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                    
+                    Text("\(book.annotations.count) highlights")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+                
+                Spacer()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+            .background(Color.clear)
+            
+            // Annotations content
+            if filteredAnnotations.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "highlighter")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    
+                    Text(annotationSearchText.isEmpty ? "No highlights in this book" : "No highlights match your search")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    if viewMode == .grid {
+                        annotationsGridView
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 40)
+                    } else {
+                        LazyVStack(spacing: 0) {
+                            annotationsListView
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 40)
+                    }
+                }
+            }
+        }
+        .background(Color.clear)
+        .navigationTitle(book.title)
+        .searchable(text: $annotationSearchText, placement: .toolbar, prompt: "Search highlights...")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 12) {
+                    // Annotation count
+                    Text("\(filteredAnnotations.count) highlights")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .fixedSize()
+                    
+                    // View mode toggle for annotations
+                    Picker(selection: $viewMode, label: EmptyView()) {
+                        Image(systemName: AnnotationViewMode.list.icon)
+                            .tag(AnnotationViewMode.list)
+                        Image(systemName: AnnotationViewMode.grid.icon)
+                            .tag(AnnotationViewMode.grid)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 80)
+                    
+                    // Export menu
+                    Menu {
+                        Button(action: {
+                            exportAsCSV()
+                        }) {
+                            Label("Export as CSV", systemImage: "doc.plaintext")
+                        }
+                        
+                        Button(action: {
+                            exportAsMarkdown()
+                        }) {
+                            Label("Export as Markdown", systemImage: "doc.text")
+                        }
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(book.annotations.isEmpty)
+                    .menuStyle(.borderlessButton)
+                    .help("Export highlights")
+                }
+            }
         }
     }
     
     private func copySelectedAnnotations() {
-        let copiedText = selectedAnnotations.map { annotation in
+        let annotations = selectedAnnotations.isEmpty ? [filteredAnnotations.first].compactMap { $0 } : Array(selectedAnnotations)
+        let copiedText = annotations.map { annotation in
             var text = ""
             if let quote = annotation.quote {
                 text += "\"\(quote)\"\n"
@@ -358,32 +632,15 @@ struct ContentView: View {
         pasteboard.setString(copiedText, forType: .string)
     }
     
-    private func setupKeyboardShortcut() {
-        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            if event.modifierFlags.contains(.command) && event.keyCode == 8 { // 'C' key
-                copySelectedAnnotations()
-                return nil // Consumed the event
-            }
-            return event
-        }
-    }
-    
-    private func removeKeyboardShortcut() {
-        if let monitor = keyboardMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
-    }
-    
     private func exportAsCSV() {
         let csvString = "Author,Book Title,Quote,Comment\n" +
-        selectedAnnotations.map { annotation in
-            let book = books.first { $0.annotations.contains(annotation) }!
+        book.annotations.map { annotation in
             return "\"\(book.author)\",\"\(book.title)\",\"\(annotation.quote ?? "")\",\"\(annotation.comment ?? "")\""
         }.joined(separator: "\n")
         
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType.commaSeparatedText]
-        panel.nameFieldStringValue = "exported_annotations.csv"
+        panel.nameFieldStringValue = "\(book.title)_annotations.csv"
         
         panel.begin { response in
             if response == .OK, let url = panel.url {
@@ -397,16 +654,17 @@ struct ContentView: View {
     }
     
     private func exportAsMarkdown() {
-        let markdownString = generateMarkdownContent()
+        // Use existing markdown generation logic but for single book
+        let markdownContent = generateSingleBookMarkdown(book: book, annotations: book.annotations)
         
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md")].compactMap { $0 }
-        panel.nameFieldStringValue = "exported_annotations.md"
+        panel.nameFieldStringValue = "\(book.title)_annotations.md"
         
         panel.begin { response in
             if response == .OK, let url = panel.url {
                 do {
-                    try markdownString.write(to: url, atomically: true, encoding: .utf8)
+                    try markdownContent.write(to: url, atomically: true, encoding: .utf8)
                 } catch {
                     print("Failed to save Markdown: \(error)")
                 }
@@ -414,31 +672,9 @@ struct ContentView: View {
         }
     }
     
-    private func generateMarkdownContent() -> String {
-        // Group annotations by book
-        let bookAnnotations = Dictionary(grouping: selectedAnnotations) { annotation in
-            books.first { $0.annotations.contains(annotation) }!
-        }
-        
-        var markdownContent = ""
-        let exportDate = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none)
-        
-        // Handle multi-book vs single book export
-        if bookAnnotations.count == 1 {
-            // Single book export
-            let book = bookAnnotations.keys.first!
-            let annotations = bookAnnotations[book]!
-            markdownContent = generateSingleBookMarkdown(book: book, annotations: annotations, exportDate: exportDate)
-        } else {
-            // Multi-book export
-            markdownContent = generateMultiBookMarkdown(bookAnnotations: bookAnnotations, exportDate: exportDate)
-        }
-        
-        return markdownContent
-    }
-    
-    private func generateSingleBookMarkdown(book: Book, annotations: [Annotation], exportDate: String) -> String {
+    private func generateSingleBookMarkdown(book: Book, annotations: [Annotation]) -> String {
         var content = ""
+        let exportDate = DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none)
         
         // Book title and metadata
         content += "# \(book.title)\n"
@@ -468,32 +704,6 @@ struct ContentView: View {
         return content
     }
     
-    private func generateMultiBookMarkdown(bookAnnotations: [Book: [Annotation]], exportDate: String) -> String {
-        var content = ""
-        
-        // Header for multi-book export
-        content += "# Exported Annotations\n\n"
-        content += "## Export Information\n"
-        content += "- **Export Date**: \(exportDate)\n"
-        content += "- **Books Included**: \(bookAnnotations.count)\n"
-        
-        let totalHighlights = bookAnnotations.values.flatMap { $0 }.filter { $0.quote != nil && !$0.quote!.isEmpty }.count
-        let totalNotes = bookAnnotations.values.flatMap { $0 }.filter { $0.comment != nil && !$0.comment!.isEmpty }.count
-        
-        content += "- **Total Highlights**: \(totalHighlights)\n"
-        content += "- **Total Notes**: \(totalNotes)\n\n"
-        
-        // Add each book
-        let sortedBooks = bookAnnotations.keys.sorted { $0.title < $1.title }
-        for book in sortedBooks {
-            let annotations = bookAnnotations[book]!
-            content += "---\n\n"
-            content += generateSingleBookMarkdown(book: book, annotations: annotations, exportDate: exportDate)
-        }
-        
-        return content
-    }
-    
     private func formatAnnotation(annotation: Annotation) -> String {
         var content = ""
         let isHighlight = annotation.quote != nil && !annotation.quote!.isEmpty
@@ -514,56 +724,177 @@ struct ContentView: View {
             content += "**Personal Note:** \(annotation.comment!)\n\n"
         }
         
-        // Add metadata
-        var metadata: [String] = []
-        
-        if let colorCode = annotation.colorCode {
-            let colorName = colorNameForCode(colorCode)
-            metadata.append("Color: \(colorName)")
-        }
-        
-        if let createdAt = annotation.createdAt {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeStyle = .short
-            let dateString = dateFormatter.string(from: Date(timeIntervalSince1970: createdAt))
-            metadata.append("Created: \(dateString)")
-        }
-        
-        if let modifiedAt = annotation.modifiedAt, modifiedAt != annotation.createdAt {
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeStyle = .short
-            let dateString = dateFormatter.string(from: Date(timeIntervalSince1970: modifiedAt))
-            metadata.append("Modified: \(dateString)")
-        }
-        
-        if !metadata.isEmpty {
-            content += "*\(metadata.joined(separator: " • "))*\n"
-        }
-        
         return content
     }
     
-    private func colorNameForCode(_ code: Int64) -> String {
-        switch code {
-        case 0:
-            return "Underline"
-        case 1:
-            return "Green"
-        case 2:
-            return "Blue"
-        case 3:
-            return "Yellow"
-        case 4:
-            return "Pink"
-        case 5:
-            return "Purple"
-        default:
-            return "Default"
+    // List view for annotations
+    private var annotationsListView: some View {
+        LazyVStack(spacing: 12) {
+            ForEach(filteredAnnotations, id: \.self) { annotation in
+                AnnotationListItem(annotation: annotation)
+            }
+        }
+    }
+    
+    // Grid view for annotations (Scrivener-style cards)
+    private var annotationsGridView: some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 16), count: 3)
+        return LazyVGrid(columns: columns, spacing: 20) {
+            ForEach(filteredAnnotations, id: \.self) { annotation in
+                AnnotationCard(annotation: annotation)
+            }
         }
     }
 }
+
+// MARK: - Annotation Components
+
+struct AnnotationListItem: View {
+    let annotation: Annotation
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Color indicator
+            Circle()
+                .fill(colorForCode(annotation.colorCode))
+                .frame(width: 8, height: 8)
+                .padding(.top, 6)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                if let quote = annotation.quote {
+                    Text(quote)
+                        .font(.system(size: 15, weight: .regular, design: .serif))
+                        .foregroundColor(.primary)
+                        .multilineTextAlignment(.leading)
+                }
+                if let comment = annotation.comment {
+                    Text(comment)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .italic()
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color(NSColor.controlBackgroundColor).opacity(0.3))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+        )
+    }
+    
+    private func colorForCode(_ code: Int64?) -> Color {
+        switch code {
+        case 0: return .red
+        case 1: return .green
+        case 2: return .blue
+        case 3: return .yellow
+        case 4: return .pink
+        case 5: return .purple
+        default: return .orange
+        }
+    }
+}
+
+// Scrivener-style whimsical cards
+struct AnnotationCard: View {
+    let annotation: Annotation
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Card header with color accent
+            HStack {
+                Circle()
+                    .fill(colorForCode(annotation.colorCode))
+                    .frame(width: 12, height: 12)
+                
+                Spacer()
+                
+                Text(cardTypeText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+            }
+            
+            // Quote content
+            if let quote = annotation.quote {
+                Text(quote)
+                    .font(.system(size: 14, weight: .regular, design: .serif))
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(6)
+            }
+            
+            // Comment if exists
+            if let comment = annotation.comment {
+                Divider()
+                    .padding(.vertical, 4)
+                
+                Text(comment)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(.secondary)
+                    .italic()
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(3)
+            }
+            
+            Spacer()
+        }
+        .padding(16)
+        .frame(height: 180)
+        .background(cardBackgroundColor.opacity(0.1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(colorForCode(annotation.colorCode).opacity(0.3), lineWidth: 2)
+        )
+        .cornerRadius(12)
+        .shadow(color: colorForCode(annotation.colorCode).opacity(0.1), radius: 4, x: 0, y: 2)
+        .scaleEffect(0.98)
+        .animation(.easeInOut(duration: 0.2), value: annotation.id)
+    }
+    
+    private var cardTypeText: String {
+        if annotation.quote != nil && annotation.comment != nil {
+            return "Highlight + Note"
+        } else if annotation.quote != nil {
+            return "Highlight"
+        } else {
+            return "Note"
+        }
+    }
+    
+    private var cardBackgroundColor: Color {
+        colorForCode(annotation.colorCode)
+    }
+    
+    private func colorForCode(_ code: Int64?) -> Color {
+        switch code {
+        case 0: return .red
+        case 1: return .green
+        case 2: return .blue
+        case 3: return .yellow
+        case 4: return .pink
+        case 5: return .purple
+        default: return .orange
+        }
+    }
+}
+
+// Legacy annotation row for compatibility
+struct AnnotationRow: View {
+    let annotation: Annotation
+    
+    var body: some View {
+        AnnotationListItem(annotation: annotation)
+    }
+}
+
 
 #Preview {
     ContentView()

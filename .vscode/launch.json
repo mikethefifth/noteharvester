@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:noteharvester}",
+            "name": "Debug NoteHarvester",
+            "program": "${workspaceFolder:noteharvester}/.build/debug/NoteHarvester",
+            "preLaunchTask": "swift: Build Debug NoteHarvester"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:noteharvester}",
+            "name": "Release NoteHarvester",
+            "program": "${workspaceFolder:noteharvester}/.build/release/NoteHarvester",
+            "preLaunchTask": "swift: Build Release NoteHarvester"
+        }
+    ]
+}
